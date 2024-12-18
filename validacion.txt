@@ -1,0 +1,1061 @@
+# Exporta a JSON al final los csv
+df.to_json("datos_limpios.json, orient="records")
+
+# Importar en mongodb los csv, se crea la bd sin validacion y la coleccion por cada csv
+
+mongoimport --uri="mongodb://localhost:27017" \
+            --db bd_sin_validacion \
+            --collection Encuestas_sin_validacion \
+            --type json \
+            --file "/home/lab/EncuestaLimpio.json" \
+
+# Enviar mediante pipelines el csv en la coleccion sin validar de la base de datos sin validacion a la base de datos con validacion
+use base_de_datos_sin_validacion
+
+db.Area_sin_validacion.aggregate([
+    { 
+        $match: {}  // Puedes agregar filtros aquí si deseas filtrar los datos
+    },
+    { 
+        $merge: { 
+            into: { db: "base_de_datos_con_validacion", coll: "Area_con_validacion" },  // Especifica la base de datos y colección destino
+            whenMatched: "replace",   // Puedes usar "merge" o "replace" según tu necesidad
+            whenNotMatched: "insert"  // Inserta documentos nuevos si no existen
+        }
+    }
+])
+
+# Validaciones en la base de datos con validacion
+====================================================AREA:
+
+mongoimport --uri="mongodb://localhost:27017" \
+            --db bd_sin_validacion \
+            --collection Areas_sin_validacion \
+            --type csv \
+            --file "/home/lab/AreaLimpioConCoordenadas.csv" \
+            --headerline
+
+db.createCollection("Areas_con_validacion", {
+    validator: {
+        $jsonSchema: {
+            bsonType: "object",
+            required: ["ID", "BARRIO", "DISTRITO", "ESTADO", "COD_POSTAL", "FECHA_INSTALACION", "coordenadasGPS", "capacidadMax", "Juegos", "cantidadJuegosPorTipo", "estadoGlobalArea"],
+            properties: {
+                ID: { bsonType: "string", description: "ID único de cada registro, debe ser un entero" },
+                BARRIO: { bsonType: "string", description: "Nombre del barrio" },
+                DISTRITO: { bsonType: "string", description: "Nombre del distrito" },
+                ESTADO: { bsonType: "string", description: "Estado actual del registro", enum: ["OPERATIVO", "EN MANTENIMIENTO", "FUERA DE SERVICIO"]},
+		        COD_POSTAL: {
+                    bsonType: "string",
+                    pattern: "^[0-9]{5}$",
+                    description: "Código postal de 5 dígitos"
+                },
+                FECHA_INSTALACION: { bsonType: "date", description: "Fecha de instalación en formato de fecha" },
+                coordenadasGPS: { bsonType: "string", description: "Coordenadas GPS del área"},
+                capacidadMax: { bsonType: "int", description: "Capacidad máxima del área, debe ser un entero" },
+		        cantidadJuegosPorTipo: {bsonType: "object", description: "Cantidad de juegos por tipo", 
+                    properties: {
+                        deportivas: {bsonType: "int", description: "Juegos de tipo deportivos"},
+                        infantiles: {bsonType: "int", description: "Juegos de tipo infantiles"},
+                        mayores: {bsonType: "int", description: "Juegos de tipo mayores"}
+                    }
+                },
+		        estadoGlobalArea: {bsonType: "string", description: "Estado global del area", enum: ["BUENO", "SUFICIENTE", "INSUFICIENTE"]},
+                Juegos: {bsonType: "array", description: "lista de referencias a juegos", 
+                    items: {
+                        bsonType: "string", description: "referencia a un juego mediante su id"}
+                    },
+                IncidenteSeguridad: {
+                    bsonType: "array",
+                    description: "Lista de referencias a incidentes de seguridad, usando el campo 'idIncidente' del dataset de incidentes",
+                    items: {
+                        bsonType: "object",
+                        required: ["ID", "TIPO_INCIDENTE", "GRAVEDAD", "FECHA_REPORTE"],
+                        properties: {
+                            ID: {
+                                    bsonType: "string",  
+                                    description: "ID del incidente"
+                                },
+                            TIPO_INCIDENTE: {
+                                    bsonType: "string",
+                                    enum: ["Vandalismo", "Robo", "Caida", "Accidente", "Daño estructural"],
+                                    description: "Tipo de incidente"
+                                },
+                            GRAVEDAD: {
+                                    bsonType: "string",
+                                    enum: ["Baja", "Media", "Alta", "Critica"],  
+                                    description: "Gravedad del incidente"
+                                },
+                            FECHA_REPORTE: {
+                                    bsonType: "date",
+                                    description: "Fecha en que se reportó el incidente"
+                                }
+                        }
+                    }
+                },
+                RegistroClima: {bsonType: "array", description: "lista de referencias a clima", 
+                    items: {
+                        bsonType: "string", description: "referencia a un clima mediante su id"}
+                    },
+                EncuestaSatisfaccion: {bsonType: "array", description: "lista de referencias a encuestas", 
+                    items: {
+                        bsonType: "string", description: "referencia a una encuesta mediante su id"}
+                        }   
+            }
+        }
+    }
+});
+
+db.Areas_con_validacion.createIndex({ ID: 1 }, { unique: true, name: "indiceArea" })
+
+//meter IncidenteSeguridad en la temporal
+db.IncidentesSeguridad_con_validacion.aggregate([
+    {
+        $match: {}  // Esto selecciona todos los documentos (sin filtro)
+    },
+    {
+        $merge: {
+            into: { db: "bd_temporal", coll: "IncidentesSeguridad_temporal" },  // La base de datos y colección de destino
+            whenMatched: "merge",  // Para fusionar los documentos si ya existen (esto se puede cambiar a 'keepExisting' si no quieres que se fusionen)
+            whenNotMatched: "insert"  // Insertar los documentos que no tienen correspondencia
+        }
+    }
+]);
+
+db.Encuestas_con_validacion.aggregate([
+    {
+        $match: {}  // Esto selecciona todos los documentos (sin filtro)
+    },
+    {
+        $merge: {
+            into: { db: "bd_temporal", coll: "Encuestas_temporal" },  // La base de datos y colección de destino
+            whenMatched: "merge",  // Para fusionar los documentos si ya existen (esto se puede cambiar a 'keepExisting' si no quieres que se fusionen)
+            whenNotMatched: "insert"  // Insertar los documentos que no tienen correspondencia
+        }
+    }
+]);
+
+db.RegistroClima_con_validacion.aggregate([
+    {
+        $match: {}  // Esto selecciona todos los documentos (sin filtro)
+    },
+    {
+        $merge: {
+            into: { db: "bd_temporal", coll: "RegistroClima_temporal" },  // La base de datos y colección de destino
+            whenMatched: "merge",  // Para fusionar los documentos si ya existen (esto se puede cambiar a 'keepExisting' si no quieres que se fusionen)
+            whenNotMatched: "insert"  // Insertar los documentos que no tienen correspondencia
+        }
+    }
+]);
+
+db.Areas_sin_validacion.aggregate([
+    {
+        $match: {}  // Esto selecciona todos los documentos (sin filtro)
+    },
+    {
+        $merge: {
+            into: { db: "bd_temporal", coll: "Areas_temporal" },  // La base de datos y colección de destino
+            whenMatched: "merge",  // Para fusionar los documentos si ya existen (esto se puede cambiar a 'keepExisting' si no quieres que se fusionen)
+            whenNotMatched: "insert"  // Insertar los documentos que no tienen correspondencia
+        }
+    }
+]);
+
+use bd_sin_validacion;
+
+db.Areas_temporal.aggregate([
+    {
+        $addFields: {
+            cantidadJuegosPorTipoObj: {
+                $function: {
+                    body: function(cantidadJuegosPorTipo) {
+                        // Reemplaza las comillas simples con comillas dobles
+                        cantidadJuegosPorTipo = cantidadJuegosPorTipo.replace(/'/g, "\"");
+                        // Intenta convertir la cadena a un objeto JSON
+                        try {
+                            return JSON.parse(cantidadJuegosPorTipo);
+                        } catch (e) {
+                            return null; // Devuelve null si no se puede convertir
+                        }
+                    },
+                    args: ["$cantidadJuegosPorTipo"],
+                    lang: "js"
+                }
+            }
+        }
+    },
+    {
+        $project: {
+            ID: { $toString: "$ID" },  // Convertir ID de entero a string
+            ESTADO: 1,
+            FECHA_INSTALACION: {
+                $cond:{
+                    if: { $eq: ["$FECHA_INSTALACION", ''] },
+                    then: null,
+                    else: {
+                        $dateFromString: {
+                            dateString: "$FECHA_INSTALACION",
+                            format: "%Y-%m-%d" 
+                        }
+                    }
+                }
+            },
+            BARRIO: 1,
+            DISTRITO: 1,
+            coordenadasGPS: 1,
+            capacidadMax: 1,
+            cantidadJuegosPorTipo: {
+                deportivas: { $toInt: "$cantidadJuegosPorTipoObj.deportivas" },
+                infantiles: { $toInt: "$cantidadJuegosPorTipoObj.infantiles" },
+                mayores: { $toInt: "$cantidadJuegosPorTipoObj.mayores" }
+            },
+            estadoGlobalArea: 1,
+            Juegos: 1,
+            IncidenteSeguridad: 1,
+            RegistroClima: 1,
+            EncuestaSatisfaccion: 1,
+            COD_POSTAL: { $toString: "$COD_POSTAL" }
+        }
+    },
+    {
+        $lookup: {
+            from: "Juegos_con_validacion",  // Especifica el nombre de la colección externa (o colección "destino") con la que se hará la unión.
+            localField: "ID",          // Es el campo en el documento de la colección principal (colección "origen") que MongoDB utiliza para hacer la unión
+            foreignField: "AreaRecreativaID",		    // Es el campo en la colección "destino" (especificada en from) en el que MongoDB busca valores coincidentes con localField.
+            as: "JuegosID"		    // Define el nombre del campo en el que se almacenará el resultado de la unión dentro del documento principal.
+        }
+    },
+    {
+        $lookup: {
+            from: "IncidentesSeguridad_temporal",
+            localField: "ID",
+            foreignField: "AreaRecreativaID",
+            as: "IncidenteSeguridadID"
+        }
+    },
+    {
+    $lookup: {
+        from: "RegistroClima_temporal",
+        let: { 
+            areaCodPostal: "$COD_POSTAL",
+            areaFechaInstalacion: "$FECHA_INSTALACION"
+        },
+        pipeline: [
+            {
+                $match: {
+                    $expr: {
+                        $and: [
+                            {
+                                $regexMatch: {
+                                    input: "$CODIGO_POSTAL",
+                                    regex: { $concat: [",?", "$$areaCodPostal", ",?"] },
+                                    options: "i"
+                                }
+                            },
+                            {
+                                $gt: ["$Fecha", "$$areaFechaInstalacion"]  // Comprobación para que la fecha en clima sea posterior a FECHA_INSTALACION
+                            }
+                        ]
+                    }
+                }
+            }
+        ],
+        as: "RegistrosClimaID"
+    }
+    },
+    {
+        $lookup: {
+            from: "Encuestas_temporal",
+            localField: "ID",
+            foreignField: "AreaRecreativaID",
+            as: "EncuestaSatisfaccionID"
+        }
+    },
+    {
+        $project: {
+            ID: 1,
+            BARRIO: 1,
+            DISTRITO: 1,
+            ESTADO: 1,
+            COD_POSTAL: 1,
+            NDP: 1,
+            FECHA_INSTALACION: 1,
+            CODIGO_INTERNO: 1,
+            coordenadasGPS: 1,
+            capacidadMax: 1,
+            cantidadJuegosPorTipo: 1,
+            estadoGlobalArea: 1,
+            Juegos: { $map: { input: "$JuegosID", as: "juego", in: "$$juego.ID" }},
+            IncidenteSeguridad: {
+                $map: {
+                    input: "$IncidenteSeguridadID",
+                    as: "incidente",
+                    in: {
+                        ID: "$$incidente.ID",
+                        TIPO_INCIDENTE: "$$incidente.TIPO_INCIDENTE",
+                        GRAVEDAD: "$$incidente.GRAVEDAD",
+                        FECHA_REPORTE: "$$incidente.FECHA_REPORTE"
+                    }
+                }
+            },
+            RegistroClima: { $map: { input: "$RegistrosClimaID", as: "clima", in: "$$clima.ID" }},
+            EncuestaSatisfaccion: { $map: { input: "$EncuestaSatisfaccionID", as: "encuesta", in: "$$encuesta.ID" }}
+        }
+    },
+    {
+        $merge: {
+            into: { db: "bd_temporal", coll: "Areas_con_validacion" },
+            whenMatched: "replace",
+            whenNotMatched: "insert"
+        }
+    }
+]);
+
+//Migrar a la de con validacion
+db.Areas_con_validacion.aggregate([
+    {
+        $match: {}  // Esto selecciona todos los documentos (sin filtro)
+    },
+    {
+        $merge: {
+            into: { db: "bd_con_validacion", coll: "Areas_con_validacion" },  // La base de datos y colección de destino
+            whenMatched: "merge",  // Para fusionar los documentos si ya existen (esto se puede cambiar a 'keepExisting' si no quieres que se fusionen)
+            whenNotMatched: "insert"  // Insertar los documentos que no tienen correspondencia
+        }
+    }
+]);
+
+
+==========================================JUEGO:
+
+mongoimport --uri="mongodb://localhost:27017" \
+            --db bd_con_validacion \
+            --collection Juegos_sin_validacion \
+            --type csv \
+            --file "/home/lab/JuegosLimpio.csv" \
+            --headerline
+
+//Migrar a la temporal
+db.Juego_sin_validacion.aggregate([
+    {
+        $match: {}  // Esto selecciona todos los documentos (sin filtro)
+    },
+    {
+        $merge: {
+            into: { db: "bd_temporal", coll: "Juego_temporal" },  // La base de datos y colección de destino
+            whenMatched: "merge",  // Para fusionar los documentos si ya existen (esto se puede cambiar a 'keepExisting' si no quieres que se fusionen)
+            whenNotMatched: "insert"  // Insertar los documentos que no tienen correspondencia
+        }
+    }
+]);
+
+
+db.createCollection("Juegos_con_validacion", {
+    validator: {
+        $jsonSchema: {
+            bsonType: "object",
+            required: ["ID", "ESTADO", "FECHA_INSTALACION", "MODELO", "tipo_juego", "indicadorExposicion", "ultimaFechaMantenimiento", "desgasteAcumulado", "AreaRecreativaID"],
+            properties: {
+                ID: { bsonType: "string", description: "ID único de cada registro, debe ser un entero" },
+                ESTADO: { bsonType: "string", description: "Estado actual del registro", enum: ["OPERATIVO", "EN MANTENIMIENTO"]},
+                FECHA_INSTALACION: {bsonType: "date", description: "Fecha de instalación"},
+                AreaRecreativaID: {bsonType: "string", description: "ID de Area"},
+                MODELO: { bsonType: "string", description: "Modelo del elemento" },
+                tipo_juego: { bsonType: "string", description: "Tipo de juego", enum: ["mayores", "deportivas", "infantiles"]},
+                ACCESIBLE: { bsonType: ["bool", "null"], description: "Indica si el elemento es accesible o no"},
+                indicadorExposicion: { bsonType: "string", description: "Indicador de exposicion", enum: ["alto" , "medio", "bajo"]},
+                ultimaFechaMantenimiento: {bsonType: ["date", "null"], description: "Fecha de último mantenimiento"},
+                desgasteAcumulado: { bsonType: "int",description: "Nivel de desgaste acumulado"},
+		Mantenimiento: { bsonType: "array", description: "lista de ids de mantenimientos", 
+			items: {bsonType: "string", description: "referencia a un mantenimiento mediante su id"}},
+		Incidencia: { bsonType: "array",
+      			description: "Lista de referencias a incidentes de seguridad, usando el campo 'idIncidente' del dataset de incidentes",
+      			items: {
+        			bsonType: "object",
+        			required: ["ID", "TIPO_INCIDENCIA", "ESTADO", "FECHA_REPORTE"],
+        			properties: {
+          				ID: {
+            					bsonType: "string",  
+            					description: "ID del incidente"
+          				},
+          			TIPO_INCIDENCIA: {
+            				bsonType: "string",
+					enum: ["Vandalismo", "Desgaste", "Rotura", "Mal funcionamiento"],
+            				description: "Tipo de incidencia"
+          				},
+          			ESTADO: {
+            				bsonType: "string",
+            				enum: ["Abierta", "Cerrada"],  
+            				description: "Estado de la incidencia"
+          				},
+          			FECHA_REPORTE: {
+            				bsonType: "date",
+            				description: "Fecha en que se reportó la incidencia"
+          				}
+        			}
+      			}
+            }
+        }
+    }
+    }
+});
+
+
+
+db.Juegos_con_validacion.createIndex({ ID: 1 }, { unique: true, name: "indiceJuego" })
+
+//meter mantenimiento en la temporal
+db.Mantenimiento_con_validacion.aggregate([
+    {
+        $match: {}  // Esto selecciona todos los documentos (sin filtro)
+    },
+    {
+        $merge: {
+            into: { db: "bd_temporal", coll: "Mantenimiento_temporal" },  // La base de datos y colección de destino
+            whenMatched: "merge",  // Para fusionar los documentos si ya existen (esto se puede cambiar a 'keepExisting' si no quieres que se fusionen)
+            whenNotMatched: "insert"  // Insertar los documentos que no tienen correspondencia
+        }
+    }
+]);
+
+db.IncidenciasUsuario_con_validacion.aggregate([
+    {
+        $match: {}  // Esto selecciona todos los documentos (sin filtro)
+    },
+    {
+        $merge: {
+            into: { db: "bd_temporal", coll: "IncidenciasUsuario_temporal" },  // La base de datos y colección de destino
+            whenMatched: "merge",  // Para fusionar los documentos si ya existen (esto se puede cambiar a 'keepExisting' si no quieres que se fusionen)
+            whenNotMatched: "insert"  // Insertar los documentos que no tienen correspondencia
+        }
+    }
+]);
+
+use bd_sin_validacion;
+
+nuevo
+db.Juego_temporal.aggregate([
+    // Primer paso: convertir el campo ID a string antes de realizar el lookup
+    {
+        $project: {
+            ID: { $toString: "$ID" },  // Convertir ID de entero a string
+            ESTADO: 1,
+            FECHA_INSTALACION: {
+                $dateFromString: {
+                    dateString: "$FECHA_INSTALACION",
+                    format: "%Y-%m-%d" 
+                }
+            },
+            MODELO: { $toString: "$MODELO" },
+            AreaRecreativaID: { $toString: "$AreaRecreativaID" },
+            tipo_juego: 1,
+            ACCESIBLE: {
+                $cond: { 
+                    if: { $eq: ["$ACCESIBLE", "True"] }, 
+                    then: true, 
+                    else: { 
+                        $cond: { 
+                            if: { $eq: ["$ACCESIBLE", "False"] }, 
+                            then: false, 
+                            else: null
+                        } 
+                    } 
+                }
+            },
+            indicadorExposicion: 1,
+            ultimaFechaMantenimiento: {
+                $cond: {
+                    if: { $eq: ["$ultimaFechaMantenimiento", "Ausente"] }, 
+                    then: null,
+                    else: {
+                        $dateFromString: {
+                            dateString: "$ultimaFechaMantenimiento",
+                            format: "%Y-%m-%d" 
+                        }
+                    }
+                }
+            },
+            desgasteAcumulado: 1,
+            Mantenimiento: 1,  // Mantener este campo para usarlo en el lookup
+            Incidencia: 1,  // Mantener este campo para usarlo en el lookup
+        }
+    },
+    // Segundo paso: realizar el primer $lookup (conversión de ID a string)
+    {
+        $lookup: {
+            from: "Mantenimiento_temporal",
+            localField: "ID",  // Ahora el campo ID es string
+            foreignField: "JuegoID",  // JuegoID en Mantenimiento_con_validacion es string
+            as: "MantenimientoID"
+        }
+    },
+    // Tercer paso: realizar el segundo $lookup
+    {
+        $lookup: {
+            from: "IncidenciasUsuario_temporal",
+            localField: "ID",
+            foreignField: "JuegoID",
+            as: "IncidenciaID"
+        }
+    },
+    // Cuarto paso: procesar los resultados de los lookup y otros campos
+    {
+        $project: {
+            ID: 1,
+            ESTADO: 1,
+            FECHA_INSTALACION: 1,
+            MODELO: 1,
+            AreaRecreativaID: 1,
+            tipo_juego: 1,
+            ACCESIBLE: 1,
+            indicadorExposicion: 1,
+            ultimaFechaMantenimiento: 1,
+            desgasteAcumulado: 1,
+            // Procesar MantenimientoID
+            Mantenimiento: { 
+                $map: { 
+                    input: "$MantenimientoID", 
+                    as: "mant", 
+                    in: "$$mant.ID" 
+                }
+            },
+            // Procesar IncidenciaID
+            Incidencia: { 
+                $map: { 
+                    input: "$IncidenciaID", 
+                    as: "inc", 
+                    in: { 
+                        ID: "$$inc.ID",
+                        TIPO_INCIDENCIA: "$$inc.TIPO_INCIDENCIA",
+                        ESTADO: "$$inc.ESTADO",
+                        FECHA_REPORTE: "$$inc.FECHA_REPORTE"
+                    } 
+                }
+            }
+        }
+    },
+    // Paso final: merge para insertar o actualizar los documentos
+    {
+        $merge: {
+            into: { db: "bd_temporal", coll: "Juegos_con_validacion" },
+            on: "ID",
+            whenMatched: "keepExisting",
+            whenNotMatched: "insert"
+        }
+    }
+]);
+
+//Migrar a la de con validacion
+db.Juegos_con_validacion.aggregate([
+    {
+        $match: {}  // Esto selecciona todos los documentos (sin filtro)
+    },
+    {
+        $merge: {
+            into: { db: "bd_con_validacion", coll: "Juegos_con_validacion" },  // La base de datos y colección de destino
+            whenMatched: "merge",  // Para fusionar los documentos si ya existen (esto se puede cambiar a 'keepExisting' si no quieres que se fusionen)
+            whenNotMatched: "insert"  // Insertar los documentos que no tienen correspondencia
+        }
+    }
+]);
+
+
+===================================ENCUESTA:
+
+
+mongoimport --uri="mongodb://localhost:27017" \
+            --db bd_sin_validacion \
+            --collection Encuestas_sin_validacion \
+            --type csv \
+            --file "/home/lab/EncuestaLimpio.csv" \
+	    --headerline
+
+
+db.createCollection("Encuestas_con_validacion", {
+    validator: {
+        $jsonSchema: {
+            bsonType: "object",
+            required: ["ID", "PUNTUACION_ACCESIBILIDAD", "PUNTUACION_CALIDAD", "FECHA", "AreaRecreativaID"],
+            properties: {
+                ID: { bsonType: "string", description: "Debe ser un ID único en formato string" },
+                PUNTUACION_ACCESIBILIDAD: { bsonType: "int", minimum: 0, maximum: 5, description: "Puntuación de 0 a 5" },
+                PUNTUACION_CALIDAD: { bsonType: "int", minimum: 0, maximum: 5, description: "Puntuación de 0 a 5" },
+                COMENTARIOS: { bsonType: "string", description: "Comentarios de texto opcionales" },
+                FECHA: { bsonType: "date", description: "Fecha de la encuesta en formato de fecha" },
+                AreaRecreativaID: { bsonType: "string", description: "ID del area"}
+            }
+        }
+    }
+})
+
+
+db.Encuestas_con_validacion.createIndex({ ID: 1 }, { unique: true, name:"indiceEncuesta" })
+
+use bd_sin_validacion;
+
+db.Encuestas_sin_validacion.aggregate([
+    {
+        $project: {
+            ID: { $toString: "$ID" },
+            PUNTUACION_ACCESIBILIDAD: 1,
+            PUNTUACION_CALIDAD: 1,
+            COMENTARIOS: 1,
+            FECHA: {
+                $dateFromString: {
+                    dateString: "$FECHA",
+                    format: "%Y-%m-%d" 
+                }
+            },
+            AreaRecreativaID: { $toString: "$AreaRecreativaID" }
+        }
+    },
+    {
+        $merge: {
+            into: { db: "bd_con_validacion", coll: "Encuestas_con_validacion" },
+            on: "ID",
+            whenMatched: "keepExisting",
+            whenNotMatched: "insert"
+        }
+    }
+]);
+
+
+
+===================================INCIDENCIASUSUARIO:
+
+mongoimport --uri="mongodb://localhost:27017" \
+            --db bd_sin_validacion \
+            --collection IncidenciasUsuarios_sin_validacion \
+            --type csv \
+            --file "/home/lab/IncidenciasUsuariosLimpio.csv" \
+	    --headerline
+
+mongoimport --uri="mongodb://localhost:27017" \
+            --db bd_sin_validacion \
+            --collection Usuarios_sin_validacion \
+            --type csv \
+            --file "/home/lab/UsuariosLimpio.csv" \
+	    --headerline
+
+
+db.createCollection("IncidenciasUsuario_con_validacion", {
+    validator: {
+        $jsonSchema: {
+            bsonType: "object",
+            required: ["ID", "TIPO_INCIDENCIA", "FECHA_REPORTE", "ESTADO", "tiempoResolucion", "JuegoID", "Usuario", "nivelEscalamiento"],
+            properties: {
+                ID: { bsonType: "string", description: "ID único en formato string" },
+                TIPO_INCIDENCIA: {
+         		bsonType: "string",
+			enum: ["Vandalismo", "Desgaste", "Rotura", "Mal funcionamiento"],
+            		description: "Tipo de incidencia"
+         		},
+          	ESTADO: {
+            		bsonType: "string",
+            		enum: ["Abierta", "Cerrada"],  
+            		description: "Estado de la incidencia"
+          		},
+                FECHA_REPORTE: { bsonType: "date", description: "Fecha de reporte en formato de fecha" },
+                tiempoResolucion: { bsonType: "double", description: "Tiempo de resolución en dias" },
+		nivelEscalamiento: {
+         		bsonType: "string",
+			enum: ["MUY URGENTE", "URGENTE", "POCO URGENTE"],
+            		description: "Categoriza la urgencia de la incidencia"
+         		},
+        JuegoID: {bsonType: "string", description: "Id del juego"},
+		Usuario: {
+            		bsonType: "array",
+			description: "Lista de usuarios",
+			items: {
+				bsonType: "object",
+				required: ["NIF", "NOMBRE", "TELEFONO"],
+            			properties: {
+                			NIF: { bsonType: "string", pattern: "^[0-9]{3}-[0-9]{2}-[0-9]{4}$", description: "NIF en formato de ddd-dd-dddd" },
+                			NOMBRE: { bsonType: "string", description: "Nombre del usuario" },
+                			EMAIL: { bsonType: "string", pattern: "^(\\S+@\\S+\\.\\S+)?$", description: "Correo electrónico válido, opcional" },
+                			TELEFONO: { bsonType: "string", pattern: "^34[0-9]{9}$", description: "Número de teléfono de 9 dígitos" }
+            				},
+			minItems: 1}
+			}	
+            }
+        }
+    }
+})
+
+
+db.IncidenciasUsuario_con_validacion.createIndex({ ID: 1 }, { unique: true, name: "indiceIncidencia"})
+
+
+use bd_sin_validacion;
+
+
+db.IncidenciasUsuarios_sin_validacion.aggregate([
+    {
+        // Convertir el campo `Usuario` (cadena) en un array `UsuarioNIFs`
+        $addFields: {
+            UsuarioNIFs: {
+                $map: {
+                    input: {
+                        $split: [
+                            { $trim: { input: "$UsuarioID", chars: "[] " } },
+                            ", "
+                        ]
+                    },
+                    as: "nif",
+                    in: { $trim: { input: "$$nif", chars: "'\"" } }
+                }
+            }
+        }
+    },
+    {
+        // Lookup para buscar usuarios cuyos NIFs están en el array `UsuarioNIFs`
+        $lookup: {
+            from: "Usuarios_sin_validacion", // Colección de usuarios
+            localField: "UsuarioNIFs",       // Campo en IncidenciasUsuarios_sin_validacion que contiene los NIFs
+            foreignField: "NIF",             // Campo en Usuarios_sin_validacion que es el NIF
+            as: "UsuarioData"                // El resultado del $lookup se guardará en el campo `UsuarioData`
+        }
+    },
+    {
+        // Proyectar los datos necesarios
+        $project: {
+            ID: { $toString: "$ID" },
+            TIPO_INCIDENCIA: 1,
+            FECHA_REPORTE: {
+                $dateFromString: {
+                    dateString: "$FECHA_REPORTE",
+                    format: "%Y-%m-%d" 
+                }
+            },
+            ESTADO: 1,
+            tiempoResolucion: { $toDouble: "$tiempoResolucion"},
+            nivelEscalamiento: 1,
+            JuegoID: { $toString: "$JuegoID" },
+            Usuario: {
+                // Embebemos solo los datos necesarios de los usuarios encontrados
+                $map: {
+                    input: "$UsuarioData",
+                    as: "user",
+                    in: {
+                        NIF: "$$user.NIF",
+                        NOMBRE: "$$user.NOMBRE",
+                        EMAIL: "$$user.EMAIL",
+                        TELEFONO: { $toString: "$$user.TELEFONO" }
+                    }
+                }
+            }
+        }
+    },
+    {
+        // Insertamos los datos transformados en la colección de destino
+        $merge: {
+            into: { db: "bd_con_validacion", coll: "IncidenciasUsuario_con_validacion" },
+            on: "ID",
+            whenMatched: "keepExisting",
+            whenNotMatched: "insert"
+        }
+    }
+]);
+
+use bd_sin_validacion;
+
+db.IncidenciasUsuarios_sin_validacion.find().forEach(doc => {
+    // Convertimos el ID a string para compararlo con el ID en la colección con validación
+    const existe = db.getSiblingDB("bd_con_validacion").IncidenciasUsuario_con_validacion.countDocuments({ ID: doc.ID.toString() });
+    // Si no existe, lo insertamos en la colección de log
+    if (existe === 0) {   
+        db.getSiblingDB("bd_con_validacion").IncidenciasUsuarios_log.insertOne(doc);
+    }
+});
+
+
+
+
+======================================INCIDENTESSEGURIDAD:
+
+
+mongoimport --uri="mongodb://localhost:27017" \
+            --db bd_sin_validacion \
+            --collection IncidentesSeguridad_sin_validacion \
+            --type csv \
+            --file "/home/lab/IncidentesSeguridadLimpio.csv" \
+	    --headerline
+
+use bd_con_validacion;
+
+db.createCollection("IncidentesSeguridad_con_validacion", {
+    validator: {
+        $jsonSchema: {
+            bsonType: "object",
+            required: ["ID", "FECHA_REPORTE", "TIPO_INCIDENTE", "GRAVEDAD", "AreaRecreativaID"],
+            properties: {
+                ID: { bsonType: "string", description: "ID del incidente"},
+          	TIPO_INCIDENTE: {
+            		bsonType: "string",
+			enum: ["Vandalismo", "Robo", "Caida", "Accidente", "Daño estructural"],
+            		description: "Tipo de incidente"
+          		},
+          	GRAVEDAD: {
+            		bsonType: "string",
+            		enum: ["Baja", "Media", "Alta", "Critica"],  
+           		description: "Gravedad del incidente"
+          		},
+                FECHA_REPORTE: { bsonType: "date", description: "Fecha del reporte en formato de fecha" },
+                AreaRecreativaID: { bsonType: "string", description: "ID del área recreativa en formato string" }
+            }
+        }
+    }
+})
+
+db.IncidentesSeguridad_con_validacion.createIndex({ ID: 1 }, { unique: true, name: "indiceIncidente" })
+
+
+use bd_sin_validacion;
+
+db.IncidentesSeguridad_sin_validacion.aggregate([
+    {
+        $project: {
+            ID: { $toString: "$ID" },
+            FECHA_REPORTE: {
+                $dateFromString: {
+                    dateString: "$FECHA_REPORTE",
+                    format: "%Y-%m-%d"
+                }
+            },
+            TIPO_INCIDENTE: 1,
+            GRAVEDAD: 1,
+            AreaRecreativaID: { $toString: "$AreaRecreativaID" }
+        }
+    },
+    {
+        $merge: {
+            into: { db: "bd_con_validacion", coll: "IncidentesSeguridad_con_validacion" },
+            on: "ID",
+            whenMatched: "keepExisting",
+            whenNotMatched: "insert"
+        }
+    }
+]);
+
+use bd_sin_validacion;
+
+db.IncidentesSeguridad_sin_validacion.find().forEach(doc => {
+    const existe = db.getSiblingDB("bd_con_validacion").IncidentesSeguridad_con_validacion.findOne({ ID: doc.ID });
+    if (!existe) {
+        // Insertar el documento en la colección de log
+        db.getSiblingDB("bd_con_validacion").IncidentesSeguridad_log.insertOne(doc);
+    }
+});
+
+// (Opcional) Limpiar la colección sin validación después de la migración
+db.IncidentesSeguridad_sin_validacion.deleteMany({});
+
+
+=======================================MANTENIMIENTO:
+
+
+mongoimport --uri="mongodb://localhost:27017" \
+            --db bd_sin_validacion \
+            --collection Mantenimiento_sin_validacion \
+            --type csv \
+            --file "/home/lab/MantenimientoLimpio.csv" \
+	    --headerline
+
+use bd_con_validacion;
+
+db.createCollection("Mantenimiento_con_validacion", {
+    validator: {
+        $jsonSchema: {
+            bsonType: "object",
+            required: ["ID", "FECHA_INTERVENCION", "TIPO_INTERVENCION", "ESTADO_PREVIO", "ESTADO_POSTERIOR", "JuegoID"],
+            properties: {
+                ID: { bsonType: "string", description: "ID único en formato string" },
+                FECHA_INTERVENCION: { bsonType: "date", description: "Fecha de intervención en formato de fecha" },
+                TIPO_INTERVENCION: { bsonType: "string",
+			enum: ["Correctivo", "Emergencia", "Preventivo"],
+            		description: "Categoriza el tipo de intervencion"
+         		},
+                ESTADO_PREVIO: { bsonType: "string", description: "Estado previo al mantenimiento" },
+                ESTADO_POSTERIOR: { bsonType: "string", description: "Estado posterior al mantenimiento" },
+                JuegoID: { bsonType: "string", description: "ID del juego"}
+            }
+        }
+    }
+})
+
+
+db.Mantenimiento_con_validacion.createIndex({ ID: 1 }, { unique: true, name:"indiceMantenimiento" })
+
+#  Se copian de la bd sin validacion a la bd con validacion. Los que no coincidan no se pasan, pero siguen estando en bd sin validacion
+
+use bd_sin_validacion;
+
+db.Mantenimiento_sin_validacion.aggregate([
+    {
+        $project: {
+            ID: 1,
+            FECHA_INTERVENCION: {
+                $dateFromString: {
+                    dateString: "$FECHA_INTERVENCION",
+                    format: "%Y-%m-%d"
+                }
+        },
+            TIPO_INTERVENCION: 1,
+            ESTADO_PREVIO: 1,
+            ESTADO_POSTERIOR: 1,
+            JuegoID: { $toString: "$JuegoID" }
+        }
+    },
+    {
+        $merge: {
+            into: { db: "bd_con_validacion", coll: "Mantenimiento_con_validacion" },
+	    on: "ID",
+            whenMatched: "keepExisting",
+            whenNotMatched: "insert"
+        }
+    }
+]);
+
+
+use bd_con_validacion;
+
+// Identificar e insertar los documentos no válidos en la colección de log
+db.bd_sin_validacion.Mantenimiento_sin_validacion.find().forEach(doc => {
+    const existe = db.Mantenimiento_con_validacion.findOne({ ID: doc.ID });
+    if (!existe) {
+        // Insertar el documento en la colección de log
+        db.Mantenimiento_log.insertOne(doc);
+    }
+});
+
+// (Opcional) Limpiar la colección sin validación si es necesario
+db.bd_sin_validacion.Mantenimiento_sin_validacion.deleteMany({});
+
+
+
+===========================================REGISTROCLIMA:
+
+db.createCollection("RegistroClima_con_validacion", {
+    validator: {
+        $jsonSchema: {
+            bsonType: "object",
+            required: ["ID", "Punto_Muestro", "Fecha"],
+            properties: {
+		ID: { bsonType: "int", description: "ID único en formato int" },
+                Punto_Muestreo: { bsonType: "string", description: "Identificación del punto de muestreo" },
+                Fecha: { bsonType: "date", description: "Fecha de registro en formato de fecha" },
+                Temperatura: { bsonType: "double", description: "Temperatura registrada, opcional" },
+                Viento: { bsonType: "bool", description: "Velocidad del viento, si es fuerte o no, opcional" },
+                Precipitaciones: { bsonType: "double", description: "Cantidad de precipitaciones, opcional" }
+            }
+        }
+    }
+})
+
+db.RegistroClima_con_validacion.createIndex({ ID: 1 }, { unique: true })
+
+
+db.RegistroClima_sin_validacion.aggregate([
+    {
+        $project: {
+            ID: 1,
+            Punto_Muestreo: 1,
+            Fecha: 1,
+            Temperatura: 1,
+            Viento: 1,
+	    Precipitaciones: 1
+        }
+    },
+    {
+        $merge: {
+            into: { db: "bd_con_validacion", coll: "RegistroClima_con_validacion" },
+	    on: "ID",
+            whenMatched: "keepExisting",
+            whenNotMatched: "insert"
+        }
+    }
+]);
+
+
+=======================================Registro clima
+
+mongoimport --uri="mongodb://localhost:27017" \
+            --db bd_sin_validacion \
+            --collection RegistroClima_sin_validacion \
+            --type csv \
+            --file "/home/lab/meteo24Limpio.csv" \
+            --headerline
+
+
+db.createCollection("RegistroClima_con_validacion", {
+    validator: {
+        $jsonSchema: {
+            bsonType: "object",
+            required: ["ID", "Punto_Muestreo", "Fecha"],
+            properties: {
+		        ID: { bsonType: "string", description: "ID único en formato int" },
+                Punto_Muestreo: { bsonType: "string", description: "Identificación del punto de muestreo" },
+                Fecha: { bsonType: "date", description: "Fecha de registro en formato de fecha" },
+                Temperatura: { bsonType: ["double", "null"], description: "Temperatura registrada, opcional" },
+                Viento: { bsonType: ["bool", "null"], description: "Velocidad del viento, si es fuerte o no, opcional" },
+                Precipitaciones: { bsonType: ["double", "null"], description: "Cantidad de precipitaciones, opcional" },
+                CODIGO_POSTAL: { bsonType: "string", description: "Código postal del punto de muestreo" }
+            }
+        }
+    }
+})
+
+db.RegistroClima_con_validacion.createIndex({ ID: 1 }, { unique: true, name:"indiceClima" })
+
+use bd_sin_validacion
+
+db.RegistroClima_sin_validacion.aggregate([
+    {
+        $project: {
+            ID: { $toString: "$ID" },
+            Punto_Muestreo: { $toString: "$Punto_Muestreo" },
+            CODIGO_POSTAL: { $toString: "$CODIGO_POSTAL" },
+            Fecha: {
+                $dateFromString: {
+                    dateString: "$Fecha",
+                    format: "%Y-%m-%d"
+                }
+            },
+            Temperatura: {
+                $cond: { 
+                if: { $eq: ["$Temperatura", ""] }, 
+                then: null, 
+                else: {$toDouble: "$Temperatura"}
+                }
+            },
+            Viento: {
+                $cond: { 
+                if: { $eq: ["$Viento", "True"] }, 
+                then: true, 
+                else: { 
+                    $cond: { 
+                        if: { $eq: ["$Viento", "False"] }, 
+                        then: false, 
+                        else: null
+                    } 
+                }
+                }
+            },
+	        Precipitaciones: {
+                $cond: { 
+                if: { $eq: ["$Precipitaciones", ""] }, 
+                then: null, 
+                else: {$toDouble: "$Precipitaciones"}
+                }
+            }
+        }
+    },
+    {
+        $merge: {
+            into: { db: "bd_con_validacion", coll: "RegistroClima_con_validacion" },
+	        on: "ID",
+            whenMatched: "keepExisting",
+            whenNotMatched: "insert"
+        }
+    }
+]);

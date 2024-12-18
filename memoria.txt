@@ -1,0 +1,2 @@
+fecha del clima anterior al area
+fecha de instalcion nula

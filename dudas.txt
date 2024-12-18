@@ -1,0 +1,4 @@
+referencia de clima
+como meter los datos con refrencia, todo desde python?
+INCIDENTE DE SEGUIRDAD ESTA EMBEBIDO
+nivelEscalamiento
